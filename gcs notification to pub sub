@@ -1,0 +1,20 @@
+gsutil notification create -f json \
+  -t projects/cool-mile-404306/topics/gcs-pubsub-test gs://gcs-pubsub-dataflow/files_folder
+
+
+gsutil notification create -f json -t projects/cool-mile-404306/topics/gcs-notification-topic -p files_folder/ -e OBJECT_FINALIZE  gs://gcs-pubsub-dataflow
+
+gsutil notification create -f json -t projects/fast-cascade-369003/topics/gcs-pubsub-sub -p files_folder/   gs://data-comparision-tool 
+
+
+projects/_/buckets/gcs-pubsub-dataflow/notificationConfigs/8
+
+
+gsutil notification list gs://gcs-pubsub-dataflow
+
+
+
+
+projects/_/buckets/gcs-pubsub-dataflow/notificationConfigs/6
+
+gsutil notification delete projects/_/buckets/gcs-pubsub-dataflow/notificationConfigs/9
