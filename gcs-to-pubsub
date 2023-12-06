@@ -1,0 +1,94 @@
+import apache_beam as beam
+import json
+import psycopg2
+import os
+import logging
+from apache_beam.options.pipeline_options import PipelineOptions
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+# Define pipeline options
+project_id = 'cool-mile-404306'  # Replace with your actual project ID
+input_bucket = 'gcs-pubsub-dataflow'  # Replace with your actual input bucket
+pipeline_options = PipelineOptions(
+    runner='DataflowRunner',
+    project=project_id,
+    region='us-central1',
+    temp_location=f'gs://{input_bucket}/tmp/',
+    streaming=True,
+)
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:/Users/User/PycharmProjects/datacomparision/credentials.json"
+
+# Define a function to parse and extract necessary fields from the Pub/Sub message
+def extract_data(message):
+    data = json.loads(message)
+    full_id = data.get('id', '')
+
+    # Extracting the relevant part of the 'id' without metageneration
+    # Assuming the format is 'gcs-pubsub-dataflow/files_folder/bt-dev-388506-458e635be1e5.json/1701182481665862'
+    parts = full_id.split('/')
+
+    # Combine the relevant parts to form the desired 'id' without metageneration
+    file_id = '/'.join(parts[:-1])
+    file_path = f"gs://{file_id}"
+
+    file_name = data.get('name', '')
+    file_value = data.get('value', '')
+    time_created = data.get('timeCreated', '')  # Extract 'timeCreated' from the message
+
+    return {'id': file_id, 'name': file_name, 'value': file_value, 'timeCreated': time_created, 'filePath': file_path}
+
+# Define a function to write data to PostgreSQL table
+class WriteToPostgres(beam.DoFn):
+    def __init__(self, connection_options):
+        self.connection_options = connection_options
+
+    def start_bundle(self):
+        import psycopg2
+        self.conn = psycopg2.connect(**self.connection_options)
+
+    def read_file_data(self, file_path):
+        import apache_beam as beam
+        # You can customize this function based on your file reading requirements
+        with beam.io.gcsio.GcsIO().open(file_path) as f:
+            return f.read().decode('utf-8')
+
+    def process(self, element):
+        try:
+            # Read file data from GCS
+            file_data = self.read_file_data(element['filePath'])
+
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO file_data (id, value, time_created, file_name) 
+                VALUES (%s, %s, %s, %s)
+                """,
+                (element['id'], file_data, element['timeCreated'], element['name'])
+            )
+            self.conn.commit()
+            cursor.close()
+            logging.info(f"Successfully inserted {element} into PostgreSQL.")
+        except Exception as e:
+            logging.error(f"Error inserting into PostgreSQL: {e}")
+            raise
+
+    def finish_bundle(self):
+        self.conn.close()
+
+# Your pipeline
+with beam.Pipeline(options=pipeline_options) as pipeline:
+    messages = (
+        pipeline
+        | 'Read from Pub/Sub' >> beam.io.ReadFromPubSub(
+            subscription='projects/cool-mile-404306/subscriptions/gcs-notification-topic-sub')
+        | 'Extract data' >> beam.Map(extract_data)
+        | 'Write to PostgreSQL' >> beam.ParDo(WriteToPostgres({
+                'dbname': 'postgres',
+                'user': 'postgres',
+                'password': 'bilvantisframe',
+                'host': '34.42.9.98',
+                'port': '5432'
+            }))
+    )
